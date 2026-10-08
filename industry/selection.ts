@@ -3,17 +3,23 @@
 // （见 docs/selection.md），卡片上显示两次的平均分。
 // 门槛按信源分级区分：官方一手信源的门槛低一些，媒体和个人的高一些。改了门槛或评分提示词，
 // 用 scripts/eval-selection.ts 在你自己标注的样本上重跑一遍，再决定上线（见 docs/selection.md）。
-
+//
+// 【招标行业说明】下面的门槛数字沿用了 AI 行业示例站的默认值 [PLACEHOLDER]，
+// 并非按招标行业标注样本校准过。上线前必须用招标行业的正负样本重新跑
+// scripts/eval-selection.ts，再按 docs/selection.md 的流程重新定标，不要凭感觉改数字。
+//
+// 临时配置：用户要求先全部列出，后续会给具体标准重新校准
+//
 export const SELECTION = {
   /**
    * 信源分级 → 入选门槛（平均分）。分级在后台“信源”里给每个源设置：
-   *   T1 官方一手（官网、官方博客、机构）· T1_5 官方账号、准官方创作者 · T2 媒体与个人
+   *   T1 官方一手（政府采购网、高校采购平台、官方公告）· T1_5 官方账号、准官方推送 · T2 聚合媒体与个人
    * 分级 EXCLUDE_MP 以及这里没有列出的分级，不参与精选评分（只进“全部动态”）。
    */
-  thresholds: { T1: 60, T1_5: 65, T2: 76 } as Record<string, number>,
+  thresholds: { T1: 0, T1_5: 0, T2: 0 } as Record<string, number>,
   /**
    * 没入选、但平均分高于这个数的资料，也用精选的写法（内容理解：标题、摘要、推荐理由）来写，
    * 其余用更便宜的“标题摘要翻译”。
    */
-  understandFloor: 50,
+  understandFloor: 0,
 } as const;
