@@ -1,0 +1,22 @@
+{
+  "name": "bid-crawler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "招标信息爬虫：抓取采招网、千里马，通过 AIHOT ingest 接口入库",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/src/main.js",
+    "dev": "node --watch src/main.ts"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "iconv-lite": "^0.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.0"
+  }
+}
