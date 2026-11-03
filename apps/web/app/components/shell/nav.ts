@@ -1,7 +1,7 @@
 // Site navigation in one place: the desktop sidebar's sections and the phone tab bar's tabs, the engine's
 // and the site's modules'.
 import type { ReactNode } from "react";
-import { subjectAfter, withSubject } from "@aihot/site";
+import { NAV, subjectAfter, withSubject } from "@aihot/site";
 import { webModules } from "../../site-modules";
 import {
   IconBolt, IconBookmark, IconDoc, IconFlame, IconGrid, IconHeart, IconHistory, IconList, IconMessage, IconPlug, IconUser,
@@ -40,6 +40,24 @@ const SECTIONS: Array<{ title: string; items: NavItem[] }> = [
   },
 ];
 
+/** Whether an engine page is a way in from the navigation (site.ts NAV.hidden); a hidden page still opens. */
+export const inNav = (to: string) => !(NAV.hidden as readonly string[]).includes(to);
+
+const UP = {
+  "/hot": { name: "热点榜", back: "热点", tab: "hot" },
+  "/topics": { name: "主题", back: "全部主题", tab: "me" },
+} as const;
+
+/**
+ * Where pages under a navigation entry lead back up to: the entry, or 精选 in its place while the site hides
+ * it. `name` is for breadcrumbs and desktop back links (热点榜), `back` for the phone bar (热点), `tab` the
+ * phone tab it sits under, `crumbs` its breadcrumb after the site's home.
+ */
+export function navUp(entry: keyof typeof UP): { to: string; name: string; back: string; tab: TabKey; crumbs: Array<{ name: string; path: string }> } {
+  if (!inNav(entry)) return { to: "/", name: "精选", back: "精选", tab: "featured", crumbs: [] };
+  return { to: entry, ...UP[entry], crumbs: [{ name: UP[entry].name, path: entry }] };
+}
+
 /**
  * The sidebar: the engine's sections with the modules' between 内容 and 更多; a module naming a section
  * that is already there adds to it.
@@ -47,7 +65,7 @@ const SECTIONS: Array<{ title: string; items: NavItem[] }> = [
 export function sidebar(): Array<{ title: string; items: NavItem[] }> {
   const [content, ...rest] = SECTIONS;
   const more = rest.pop()!;
-  const sections = [content!, ...rest].map((s) => ({ ...s, items: [...s.items] }));
+  const sections = [content!, ...rest].map((s) => ({ ...s, items: s.items.filter((i) => inNav(i.to)) }));
   for (const m of webModules()) {
     if (!m.sidebar) continue;
     const section = sections.find((s) => s.title === m.sidebar!.section);
@@ -58,7 +76,7 @@ export function sidebar(): Array<{ title: string; items: NavItem[] }> {
 }
 
 /** A sidebar entry is lit on its pages; 日报 also covers weekly and monthly reports. */
-export function sidebarIsActive(item: NavItem, pathname: string): boolean {
+export function sidebarIsActive(item: Pick<NavItem, "to" | "end">, pathname: string): boolean {
   if (item.end) return pathname === item.to;
   if (item.to === "/daily") return /^\/(daily|weekly|monthly)(\/|$)/.test(pathname);
   return pathname === item.to || pathname.startsWith(`${item.to}/`);
@@ -94,5 +112,22 @@ const ENGINE_TABS: Tab[] = [
 
 /** The tab bar: the engine's, the modules' before 我的. */
 export function tabs(): Tab[] {
-  return [...ENGINE_TABS.slice(0, -1), ...webModules().flatMap((m) => m.tabs ?? []), ENGINE_TABS.at(-1)!];
+  return [...ENGINE_TABS.slice(0, -1).filter((t) => inNav(t.to)), ...webModules().flatMap((m) => m.tabs ?? []), ENGINE_TABS.at(-1)!];
+}
+
+/**
+ * The rail that stands in for the sidebar on narrow desktops (unfolded foldables, tablets upright): the
+ * tabs, with 全部 after 精选 since desktop pages have no 精选 | 全部 switch.
+ */
+export function rail(): Tab[] {
+  const all = tabs();
+  if (!inNav("/all")) return all;
+  const at = all.findIndex((t) => t.key === "featured") + 1;
+  return [...all.slice(0, at), { key: "all", to: "/all", label: "全部", icon: IconList }, ...all.slice(at)];
+}
+
+/** A rail entry is lit on its pages; 我的 also on the pages that sit under it on phones. */
+export function railIsActive(tab: Tab, pathname: string, screenTab: TabKey | undefined): boolean {
+  if (tab.key === "me") return pathname === tab.to || screenTab === "me";
+  return sidebarIsActive({ to: tab.to, end: tab.to === "/" }, pathname);
 }

@@ -1,4 +1,24 @@
 // Publication rules. Each rule is defined once here and used by every exit.
+import { serverModules } from '../modules.ts';
+
+/** Presentation exceptions never alter scoring, selection eligibility or fact membership. */
+export function independentSelectedSources(): string[] {
+  return [...new Set(serverModules().flatMap(m => m.independentSelectedSources ?? []))];
+}
+
+export function isIndependentSelectedSource(sourceId: string): boolean {
+  return independentSelectedSources().includes(sourceId);
+}
+
+/** The independent source a source echoes: the same author, whose post on the same news gives way to the article. */
+export function independentOfEcho(sourceId: string): string | null {
+  for (const m of serverModules()) if (m.independentSelectedEchoes?.[sourceId]) return m.independentSelectedEchoes[sourceId]!;
+  return null;
+}
+
+export function echoesOfIndependent(sourceId: string): string[] {
+  return serverModules().flatMap((m) => Object.entries(m.independentSelectedEchoes ?? {}).filter(([, of]) => of === sourceId).map(([echo]) => echo));
+}
 
 export interface SourceFacts {
   id: string;

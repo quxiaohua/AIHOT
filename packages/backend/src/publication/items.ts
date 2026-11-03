@@ -4,10 +4,12 @@ import { CATEGORY_KEYS, toPublicApiCategory, type CategoryKey, type ChannelKey, 
 import type { FeedItemSummary, ItemSummary, MediaView, XPostView } from "@aihot/contracts/site";
 import { POLICY } from "@aihot/site";
 import { sql, type Db } from "../db.ts";
-import { isEmptyOrLinkOnly } from "../content/posts.ts";
+import { isChineseText } from "../lib/text.ts";
+import { isEmptyOrLinkOnly, withXArticle } from "../content/posts.ts";
 import { proxiedImage, proxiedImageSet } from "../media/imgproxy.ts";
+import { sourceOwnsPost } from "../sources/account.ts";
 import { displayTags, publicSourceName } from "./rules.ts";
-import { seatedCondition } from "./scope.ts";
+import { foldableSelectionCondition, seatedCondition } from "./scope.ts";
 
 export interface ItemRow {
   id: string;
@@ -34,6 +36,10 @@ export interface ItemRow {
   /** Participation mode of the source now (editorial, hot_signal, isolated). */
   source_mode: string;
   x_post: Record<string, any> | null;
+  /** Saved long article, projected only where the publication allows full text. */
+  x_article: { title?: string; text?: string } | null;
+  /** Current source icon only when that account is this post's author. */
+  author_avatar_url?: string | null;
   author: string | null;
   language: string | null;
   story_public_id: string | null;
@@ -48,7 +54,8 @@ export const ITEM_COLUMNS = sql`
   p.article_id AS id, p.title, p.original_title, p.summary, p.reason, p.category, p.tags, p.score,
   p.selected, p.seat, p.channel, p.url, p.published_at, p.discovered_at, p.timeline_at, p.visibility,
   p.body_mode, p.indexable, p.fact_id, s.name AS source_name, s.participation_mode AS source_mode,
-  a.x_post, a.author, a.language,
+  a.x_post, CASE WHEN p.body_mode = 'full' THEN a.x_article END AS x_article, a.author, a.language,
+  CASE WHEN s.kind = 'x_search' AND ${sourceOwnsPost(sql`s.config`, sql`a.x_post->>'handle'`)} THEN s.icon_url END AS author_avatar_url,
   st.public_id::text AS story_public_id, st.title AS story_title,
   CASE WHEN p.channel = 'x' THEN tr.body_text END AS zh_text, qt.text_zh AS quoted_zh`;
 
@@ -108,8 +115,8 @@ function mediaView(m: Record<string, any>, mode: "card" | "thumb" | "full" = "th
   };
 }
 
-export function xView(row: Pick<ItemRow, "x_post" | "zh_text"> & Partial<Pick<ItemRow, "quoted_zh">>, compact = false, responsive = compact): XPostView | null {
-  const x = row.x_post;
+export function xView(row: Pick<ItemRow, "x_post" | "zh_text"> & Partial<Pick<ItemRow, "quoted_zh" | "author_avatar_url" | "x_article">>, compact = false, responsive = compact): XPostView | null {
+  const x = withXArticle(row.x_post, row.x_article ?? null);
   if (!x) return null;
   const quoted = x.quoted && typeof x.quoted === "object"
     ? {
@@ -120,14 +127,16 @@ export function xView(row: Pick<ItemRow, "x_post" | "zh_text"> & Partial<Pick<It
   const media = ((x.media ?? []) as Array<Record<string, any>>)
     .map((raw) => ({ raw, view: mediaView(raw, compact || !responsive ? "thumb" : "full", responsive) }))
     .filter((entry): entry is { raw: Record<string, any>; view: MediaView } => entry.view !== null);
-  const avatarSrcSet = responsive ? proxiedImageSet(x.avatarUrl, "avatar") : null;
+  const avatarUrl = row.author_avatar_url ?? x.avatarUrl;
+  const avatarSrcSet = responsive ? proxiedImageSet(avatarUrl, "avatar") : null;
   return {
     authorName: String(x.authorName ?? x.handle ?? ""),
     handle: String(x.handle ?? ""),
-    avatarUrl: proxiedImage(x.avatarUrl, "avatar"),
+    avatarUrl: proxiedImage(avatarUrl, "avatar"),
     ...(avatarSrcSet ? { avatarSrcSet } : {}),
     text: String(x.text ?? ""),
-    translation: !isEmptyOrLinkOnly(String(x.text ?? "")) && row.zh_text && row.zh_text.trim() !== String(x.text ?? "").trim() ? row.zh_text : null,
+    // Stored X translations cover the post alone. Never label that introduction as the whole long article.
+    translation: !row.x_article?.text && !isEmptyOrLinkOnly(String(x.text ?? "")) && row.zh_text && row.zh_text.trim() !== String(x.text ?? "").trim() ? row.zh_text : null,
     quoted,
     // A multi-image list grid is 112 CSS px wide; one image can be 240 px. Keep 3x pixels for both.
     // Detail retains full media for the lightbox; srcSet bounds the displayed image.
@@ -182,11 +191,10 @@ export function toFeedItemSummary(row: ItemRow): FeedItemSummary {
 }
 
 /**
- * An article written in Chinese: its language says so, or its text opens in Chinese and it is not marked
- * English (the translator's rule, editorial/translate.ts). Every exit shows such a body as it is.
+ * Every exit uses the same language decision as writing and translation.
  */
 export function isChineseBody(a: { language?: string | null; body_text?: string | null }): boolean {
-  return a.language === "zh" || (/[一-鿿]/.test(a.body_text?.slice(0, 400) ?? "") && a.language !== "en");
+  return isChineseText(a.body_text ?? "", a.language);
 }
 
 /** The complete Chinese translation an export (Markdown, full RSS) carries; a page also shows a partial one. */
@@ -203,7 +211,7 @@ export async function seatHolders(rows: ItemRow[], now: Date, db: Db = sql): Pro
   if (!yielding.length) return new Map();
   const holders = await db<{ fact_id: number; id: string; title: string }[]>`
     SELECT p.fact_id, p.article_id AS id, p.title FROM publications p
-    WHERE p.fact_id IN ${db([...new Set(yielding.map((r) => r.fact_id!))])} AND ${seatedCondition(now)}`;
+    WHERE p.fact_id IN ${db([...new Set(yielding.map((r) => r.fact_id!))])} AND ${seatedCondition(now)} AND ${foldableSelectionCondition()}`;
   const byFact = new Map(holders.map((h) => [Number(h.fact_id), { id: h.id, title: h.title }]));
   return new Map(yielding.flatMap((r) => (byFact.has(Number(r.fact_id)) ? [[r.id, byFact.get(Number(r.fact_id))!] as const] : [])));
 }
